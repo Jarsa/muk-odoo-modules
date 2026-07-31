@@ -8,7 +8,7 @@
         access token is materialized as an MCP key, so scope gating, rate
         limiting and audit logging keep working unchanged.
     """,
-    'version': '17.0.1.0.0',
+    'version': '17.0.1.0.1',
     'category': 'Tools/API',
     'license': 'LGPL-3',
     'author': 'MuK IT, Jarsa',

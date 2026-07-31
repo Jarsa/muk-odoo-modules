@@ -9,6 +9,9 @@
 		<field name="arch" type="xml">
 			<page name="claude_code" position="before">
 				<page string="Claude Online" name="claude_online">
+					<group>
+						<field name="mcp_url" readonly="1"/>
+					</group>
 					<div>
 						<p>
 							claude.ai (web and mobile) connects through OAuth,
