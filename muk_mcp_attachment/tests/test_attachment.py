@@ -15,7 +15,9 @@ class TestMCPAttachment(HttpCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.partner = cls.env['res.partner'].create({'name': 'MCP Upload'})
-        cls.raw = os.urandom(4096) + b'\x00\xff\r\n'
+        # Many '&' and '=' like a real PDF: form parsing would explode them
+        # into thousands of fields and abort with 413.
+        cls.raw = os.urandom(4096) + b'a=1&' * 2000 + b'\x00\xff\r\n'
         cls.sha = hashlib.sha256(cls.raw).hexdigest()
         cls.admin = cls.env.ref('base.user_admin')
         cls.mixin = cls.env['muk_mcp.mixin'].with_user(cls.admin)
@@ -69,7 +71,9 @@ class TestMCPAttachment(HttpCase):
 
     def test_signed_url_upload(self):
         url = self._request()
-        response = self.opener.put(url, data=self.raw)
+        response = self.opener.put(
+            url, data=self.raw, headers={'Content-Type': 'application/octet-stream'}
+        )
         self.assertEqual(response.status_code, 200, response.text)
         attachment = self.env['ir.attachment'].browse(response.json()['id'])
         self.assertEqual(attachment.raw, self.raw)

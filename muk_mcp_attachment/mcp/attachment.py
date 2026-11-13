@@ -152,7 +152,10 @@ class MCPMixin(models.AbstractModel):
             'Preferred way to attach a file to a record. Returns a one-off signed '
             'upload_url (valid 15 minutes) bound to this record, file name, size '
             'and SHA-256. Then send the raw bytes with: '
-            "curl -sS -X PUT --data-binary @<file> '<upload_url>'. "
+            "curl -sS -X PUT -H 'Content-Type: application/octet-stream' "
+            "--data-binary @<file> '<upload_url>'. The Content-Type header is "
+            'mandatory: without it curl sends form-urlencoded and Odoo rejects '
+            'binary files with 413. '
             'The server rejects the upload unless size and SHA-256 match, so the '
             'stored file is byte-identical to the local one. Compute them with '
             '`wc -c < file` and `sha256sum file` (macOS: `shasum -a 256 file`).'
@@ -197,5 +200,11 @@ class MCPMixin(models.AbstractModel):
             'upload_url': url,
             'method': 'PUT',
             'expires_in_seconds': int(UPLOAD_TTL.total_seconds()),
-            'command': f"curl -sS -X PUT --data-binary @'<path/to/{name}>' '{url}'",
+            # ponytail: octet-stream is required; form-urlencoded makes Odoo parse
+            # the binary as a form and abort with 413 (werkzeug max_form_parts).
+            'content_type': 'application/octet-stream',
+            'command': (
+                "curl -sS -X PUT -H 'Content-Type: application/octet-stream' "
+                f"--data-binary @'<path/to/{name}>' '{url}'"
+            ),
         }

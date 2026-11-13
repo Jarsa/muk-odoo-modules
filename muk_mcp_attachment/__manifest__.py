@@ -8,7 +8,7 @@
         the client PUTs the raw bytes to. Size and SHA-256 are verified
         before the attachment is created, with the caller's access rights.
     """,
-    'version': '19.0.1.0.0',
+    'version': '19.0.1.0.1',
     'category': 'Tools/API',
     'license': 'LGPL-3',
     'author': 'MuK IT, Jarsa',
