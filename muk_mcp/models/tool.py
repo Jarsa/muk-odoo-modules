@@ -135,14 +135,42 @@ class MCPTool(models.Model):
         status, text, info, error = 'ok', None, {}, None
         arguments = dict(arguments or {})
         model_name = arguments.get('model')
-        start = time.monotonic()
-        try:
-            text, info, model_name = self._execute(
-                name,
-                arguments,
-                env,
-                enforce_scope,
+        # Read the key before running the tool: a failure clears the cache and may
+        # leave the transaction aborted, so reading it in the log afterwards can fail.
+        request_values = {}
+        with contextlib.suppress(Exception):
+            if key := getattr(request, '_mcp_key', None):
+                request_values['key_name'] = key.name
+                request_values['key_prefix'] = key.key_prefix
+            request_values['ip_address'] = (
+                request.httprequest.remote_addr if request else None
             )
+        start = time.monotonic()
+        # Undo the tool's partial writes when it fails: callers turn the error into
+        # a result and the surrounding transaction is still committed. A tool that
+        # commits or rolls back itself (EDI signing, mail auto_commit, ...) ends the
+        # savepoint along with the transaction: if it then fails, roll back what it
+        # wrote since, everything before is already committed.
+        ended = []
+        env.cr.postcommit.add(lambda: ended.append(True))
+        env.cr.postrollback.add(lambda: ended.append(True))
+        savepoint = env.cr.savepoint()
+        try:
+            try:
+                text, info, model_name = self._execute(
+                    name,
+                    arguments,
+                    env,
+                    enforce_scope,
+                )
+            except Exception:
+                if ended:
+                    env.cr.rollback()
+                else:
+                    savepoint.close(rollback=True)
+                raise
+            if not ended:
+                savepoint.close(rollback=False)
             return text, info
         except Exception as exc:
             status = 'denied' if isinstance(exc, MCPScopeDenied) else 'error'
@@ -161,6 +189,7 @@ class MCPTool(models.Model):
                         info=info,
                         error=error,
                         duration_ms=int((time.monotonic() - start) * 1000),
+                        request_values=request_values,
                     ),
                 )
 
@@ -221,8 +250,12 @@ class MCPTool(models.Model):
         info: dict[str, Any],
         error: str | None,
         duration_ms: int,
+        request_values: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Build the audit-log payload for a tool call, including request meta."""
+        """Build the audit-log payload for a tool call, including request meta.
+
+        :param request_values: key and client address read before the tool ran.
+        """
         values = {
             'method': 'tools/call',
             'tool_name': name,
@@ -239,11 +272,7 @@ class MCPTool(models.Model):
         else:
             values['error_message'] = error
             values['response_data'] = error
-        with contextlib.suppress(Exception):
-            if key := getattr(request, '_mcp_key', None):
-                values['key_name'] = key.name
-                values['key_prefix'] = key.key_prefix
-            values['ip_address'] = request.httprequest.remote_addr if request else None
+        values.update(request_values or {})
         return values
 
     @api.model

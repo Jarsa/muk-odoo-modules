@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import traceback
+from contextlib import nullcontext
 from functools import partial
 from typing import Any
 
@@ -222,8 +223,12 @@ class MCPController(http.Controller):
                 )
         is_tool_call = method == 'tools/call'
         start = time.time()
+        # A failing handler must not leave partial writes, since the request still
+        # commits after the error reply; tools/call commits and rolls back on its own.
+        savepoint = nullcontext() if is_tool_call else request.env.cr.savepoint()
         try:
-            result = handler(params)
+            with savepoint:
+                result = handler(params)
         except Exception as exc:
             if not is_tool_call:
                 self._log_request(
@@ -326,6 +331,10 @@ class MCPController(http.Controller):
                 is_error=True,
             )
         enforce_scope = self._get_tool_enforce_scope()
+        # retrying rolls back the whole transaction on a serialization or integrity
+        # error; commit first so that rollback only discards the tool's own work and
+        # not the session activity or a session created earlier in the same batch.
+        request.env.cr.commit()
         try:
             result, _record_info = retrying(
                 partial(
