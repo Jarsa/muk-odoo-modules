@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+from odoo.exceptions import UserError
+
 from odoo.tools import config as odoo_config
 
 from odoo.addons.muk_ai.tests.common import AITestCommon
@@ -459,3 +461,32 @@ class TestLogUnification(AITestCommon):
         self.assertEqual((ordered[0].payload or {}).get('content'), 'msg-0')
         self.assertEqual(ordered[-1].kind, 'command')
         self.assertEqual((ordered[-1].payload or {}).get('name'), '/clear')
+
+    def test_chat_call_failure_rolls_back_tool_writes(self):
+        def fail(self_arg, name, arguments, env, enforce_scope):
+            env['res.partner'].create({'name': 'AI Rollback Partner'})
+            raise UserError('AI rollback error')
+
+        with patch.object(
+            type(self.env['muk_mcp.tool']),
+            '_execute',
+            autospec=True,
+            side_effect=fail,
+        ):
+            output, ok = self.session._dispatch_tool_call(
+                'list_modules',
+                {},
+                'rollback_c1',
+            )
+        self.assertFalse(ok)
+        self.assertEqual(output, {'error': 'AI rollback error'})
+        self.assertFalse(
+            self.env['res.partner'].search_count([('name', '=', 'AI Rollback Partner')]),
+        )
+        row = self.env['muk_mcp.log'].search(
+            [
+                ('session_id', '=', self.session.id),
+                ('tool_name', '=', 'list_modules'),
+            ],
+        )
+        self.assertEqual(row.status, 'error')
